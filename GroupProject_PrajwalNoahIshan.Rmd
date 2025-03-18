@@ -1,0 +1,21 @@
+---
+title: "Group Project"
+author: "Ishan Agrahar, Prajwal Bhandari, Noah Tobias"
+output: html_notebook
+---
+
+#Read the data
+ucars<-read.csv("usedcars.csv")
+#Set the seed following the format I have given above.
+#For instance if you are in group 1 your seed should be 30001,
+#if you are in group 12 your seed should be 30012.
+#But I set it to 1234 as an example
+set.seed(1234)
+#Decide which records to keep in the training set. I sort them for the convenience
+trainRec<-sort(sample(1:nrow(ucars),size=72))
+#Extract the indexes that were not in trainRec to the test records
+testRec<-setdiff(1:nrow(ucars),trainRec)
+#Extract indexed rows in trainRec and keep them in the training set
+traincars<-ucars[trainRec,]
+#Extract indexed rows in testRec and keep them in the training set
+testcars<-ucars[testRec,]
