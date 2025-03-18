@@ -10,7 +10,7 @@ ucars<-read.csv("usedcars.csv")
 #For instance if you are in group 1 your seed should be 30001,
 #if you are in group 12 your seed should be 30012.
 #But I set it to 1234 as an example
-set.seed(1234)
+set.seed(30002)
 #Decide which records to keep in the training set. I sort them for the convenience
 trainRec<-sort(sample(1:nrow(ucars),size=72))
 #Extract the indexes that were not in trainRec to the test records
