@@ -4,18 +4,91 @@ author: "Ishan Agrahar, Prajwal Bhandari, Noah Tobias"
 output: html_notebook
 ---
 
-#Read the data
-ucars<-read.csv("usedcars.csv")
+## Load Libraries and Read the data
+```{r}
+library(tidyverse)
+library(leaps)
+library(corrplot)
+library(car)
+
+ucars <- read.csv("usedcars.csv")
+```
+
+## Clean Data
+```{r}
+# lowercase names
+names(ucars) <- tolower(names(ucars))
+ucars <- ucars %>% select(-car_id) %>% # drop carid variable
+  mutate(brand = as.factor(brand),
+         model = as.factor(model), 
+         fuel_type = as.factor(fuel_type),
+         transmisson = as.factor(transmission),
+         owner_type = as.factor(owner_type),
+         seats = as.factor(seats) # only 3 values. probably easier for predictions later on
+         )
+
+
+```
+
+## Data Split
+```{r}
 #Set the seed following the format I have given above.
 #For instance if you are in group 1 your seed should be 30001,
 #if you are in group 12 your seed should be 30012.
 #But I set it to 1234 as an example
 set.seed(30002)
 #Decide which records to keep in the training set. I sort them for the convenience
-trainRec<-sort(sample(1:nrow(ucars),size=72))
+trainRec <- sort(sample(1:nrow(ucars),size=72))
 #Extract the indexes that were not in trainRec to the test records
-testRec<-setdiff(1:nrow(ucars),trainRec)
+testRec <- setdiff(1:nrow(ucars),trainRec)
 #Extract indexed rows in trainRec and keep them in the training set
-traincars<-ucars[trainRec,]
+traincars <- ucars[trainRec,]
 #Extract indexed rows in testRec and keep them in the training set
-testcars<-ucars[testRec,]
+testcars <- ucars[testRec,]
+```
+
+## Preliminary Data Analysis
+
+We can examine the distribution of the car brands in the dataset.
+```{r}
+traincars %>% 
+  ggplot(aes(brand)) + 
+  geom_bar(color = 'black', fill = 'steelblue') +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+  labs(
+    x = 'Car Brand',
+    y = 'Number of Cars',
+    title = 'Distribution of Car Brands in Training Dataset'
+  )
+```
+
+Between the 11 car brands in the data, we see a pretty consistent split between car brands, with only Mahindra being an obvious outlier.
+
+We want to see what the mean price is for the ownership levels. We believe that a car that has been bought and sold multiple times would decrease in price.
+```{r}
+traincars %>%
+  ggplot(aes(owner_type, y = price)) + 
+  geom_violin() +
+  labs(
+    x = 'Owner Type', 
+    y = 'Price',
+    title = 'Distribution of Car Prices by Owner Type'
+  )
+```
+
+The violin plot shows the distribution of the prices based on owner type. The first and second ownership types have pretty uniform shape, while the third type is much more compact. It's harder to tell if there is any significant difference between the first owner and second owner types, but it's clear than the third owner type sells for much lower than the other two groups. 
+
+We think there might be some relationship between the price of the car and the power/liter that the car can output. This speaks to a more efficient car, and we believe more efficient cars would be priced higher. If the engine variable is measured in cc, we have power = bhp/cc
+```{r}
+traincars %>%
+  mutate(pow_per_cc = power / engine) %>%
+  ggplot(aes(pow_per_cc, price)) +
+  geom_point() +
+  labs(
+    x = 'Power of Car (bhp) / Engine Capacity (cc)',
+    y = 'Price of Car',
+    title = 'Scatterplot of Power per Cubic Centimeter and Price'
+  )
+```
+
+In this scatter plot, we see that the data cloud folows a positive relationship which is also decently linear. There is an outlier point at 18bhp/cc on the x axis. To do further analysis about the relationship of the variables, we can obtain a linear regression model, check for influential points through metrics like Cook's distance, check for statistical significance, etc. One issue that may arise is non-constant variance, which may invalidate our predictive capacity, which is easily spotted in the above scatter plot. 
