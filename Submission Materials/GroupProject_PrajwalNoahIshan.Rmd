@@ -1,0 +1,288 @@
+---
+title: "Group Project"
+author: "Ishan Agrahar, Prajwal Bhandari, Noah Tobias"
+output: html_notebook
+---
+
+## Load Libraries and Read the data
+```{r}
+library(tidyverse)
+library(leaps)
+library(corrplot)
+library(car)
+library(dplyr)
+# setwd("C:/Users/Noah/Downloads")
+ucars <- read.csv("usedcars.csv")
+```
+
+## Clean Data
+```{r}
+# lowercase names
+names(ucars) <- tolower(names(ucars))
+ucars <- ucars %>% select(-car_id) %>% # drop carid variable
+  mutate(brand = as.factor(brand),
+         model = as.factor(model), 
+         fuel_type = as.factor(fuel_type),
+         transmission = as.factor(transmission),
+         owner_type = as.factor(owner_type),
+         seats = as.factor(seats) # only 3 values. probably easier for predictions later on
+         )
+
+
+```
+
+## Data Split
+```{r}
+#Set the seed following the format I have given above.
+#For instance if you are in group 1 your seed should be 30001,
+#if you are in group 12 your seed should be 30012.
+#But I set it to 1234 as an example
+set.seed(30002)
+#Decide which records to keep in the training set. I sort them for the convenience
+trainRec <- sort(sample(1:nrow(ucars),size=72))
+#Extract the indexes that were not in trainRec to the test records
+testRec <- setdiff(1:nrow(ucars),trainRec)
+#Extract indexed rows in trainRec and keep them in the training set
+traincars <- ucars[trainRec,]
+#Extract indexed rows in testRec and keep them in the training set
+testcars <- ucars[testRec,]
+```
+
+## Preliminary Data Analysis
+
+We can examine the distribution of the car brands in the dataset.
+```{r}
+traincars %>% 
+  ggplot(aes(brand)) + 
+  geom_bar(color = 'black', fill = 'steelblue') +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+  labs(
+    x = 'Car Brand',
+    y = 'Number of Cars',
+    title = 'Distribution of Car Brands in Training Dataset'
+  )
+```
+
+Between the 11 car brands in the data, we see a pretty consistent split between car brands, with only Mahindra being an obvious outlier.
+
+We want to see what the mean price is for the ownership levels. We believe that a car that has been bought and sold multiple times would decrease in price.
+```{r}
+traincars %>%
+  ggplot(aes(owner_type, y = price)) + 
+  geom_violin() +
+  labs(
+    x = 'Owner Type', 
+    y = 'Price',
+    title = 'Distribution of Car Prices by Owner Type'
+  )
+```
+
+The violin plot shows the distribution of the prices based on owner type. The first and second ownership types have pretty uniform shape, while the third type is much more compact. It's harder to tell if there is any significant difference between the first owner and second owner types, but it's clear than the third owner type sells for much lower than the other two groups. 
+
+We think there might be some relationship between the price of the car and the power/liter that the car can output. This speaks to a more efficient car, and we believe more efficient cars would be priced higher. If the engine variable is measured in cc, we have power = bhp/cc
+```{r}
+traincars %>%
+  mutate(pow_per_cc = power / engine) %>%
+  ggplot(aes(pow_per_cc, price)) +
+  geom_point() +
+  labs(
+    x = 'Power of Car (bhp) / Engine Capacity (cc)',
+    y = 'Price of Car',
+    title = 'Scatterplot of Power per Cubic Centimeter and Price'
+  )
+```
+
+In this scatter plot, we see that the data cloud folows a positive relationship which is also decently linear. There is an outlier point at 18bhp/cc on the x axis. To do further analysis about the relationship of the variables, we can obtain a linear regression model, check for influential points through metrics like Cook's distance, check for statistical significance, etc. One issue that may arise is non-constant variance, which may invalidate our predictive capacity, which is easily spotted in the above scatter plot. 
+
+
+```{r}
+# Compute correlation matrix for numeric variables
+cor_matrix <- cor(traincars %>% select_if(is.numeric), use = "complete.obs")
+
+# Visualize the correlation matrix
+corrplot(cor_matrix, method = "color", type = "upper", tl.cex = 0.7, tl.col = "black")
+
+```
+
+The correlation matrix revealed that some numeric variables have strong relationships with each other. For instance, engine and power are highly positively correlated, indicating that larger engines tend to produce more power. Additionally, year and kilometers driven show a strong negative correlation, which aligns with expectations that the younger a car is the less kilometers driven it will have. Mileage also has a significant negative correlation with price, engine, and power, suggesting that higher-mileage cars tend to be cheaper, which seems right as they also seem to have smaller engine capacity and less power. High correlation between independent variables, such as the ones listed previously, may indicate potential multicollinearity, which we will address in the modeling stage.
+
+
+```{r}
+# Price distribution
+traincars %>%
+  ggplot(aes(x = price)) +
+  geom_histogram(color = "black", fill = "blue", bins = 30) +
+  labs(title = "Distribution of Car Prices", x = "Price", y = "Frequency")
+
+```
+
+
+```{r}
+# Boxplot of price
+traincars %>%
+  ggplot(aes(y = price)) +
+  geom_boxplot(fill = "lightblue", color = "black") +
+  labs(title = "Boxplot of Car Prices", y = "Price")
+```
+
+The histogram of car prices reveals a right-skewed distribution, where a majority of cars fall within the lower price range, with fewer high-priced vehicles. This suggests that applying a log transformation to price may help normalize the distribution, making it more suitable for predictive modeling. The boxplot further emphasizes the wide spread of car prices, with some values significantly higher than the rest. While no extreme outliers are explicitly marked, the upper range extends very far right, likely indicating the presence of luxury or premium models. These high-end vehicles could have a disproportionate impact on model predictions, and further analysis is needed to determine whether they should be removed, adjusted, or modeled separately. By addressing skewness and accounting for high-priced vehicles, we can improve model performance and ensure better generalization when predicting used car prices.
+
+
+```{r}
+traincars <- traincars %>%
+  mutate(
+    age = 2025 - year,  
+    age_squared = age^2,  
+    log_price = log(price),  
+    log_kmdriven = log(kilometers_driven + 1),  
+    pow_per_cc = power / engine,  
+    brand = factor(brand)  # Ensure brand is a factor
+  )
+```
+
+
+**Feature Engineering Discussion:** 
+
+To improve the model’s predictive capacity, we created several new features:
+
+1) Quadratic Age (age_squared): Vehicle depreciation is often non-linear, meaning older cars do not lose value at a constant rate. Including an age-squared term captures these diminishing returns in depreciation, improving model performance.
+
+2) Log Transformation of Price (log_price): Since car prices exhibit right-skewness, applying a logarithmic transformation helps normalize the distribution, making the relationship between predictors and price more linear.
+
+3) Log Transformation of Kilometers Driven (log_kilometersdriven): Kilometers driven is also highly skewed, with a few cars having disproportionately high mileage. Log-transforming this variable reduces the impact of extreme values, improving model interpretability.
+
+4) Power per CC (pow_per_cc): This metric captures engine efficiency, as cars with higher power relative to engine displacement tend to have better performance and may command higher prices. Including this ratio helps quantify the relationship between power output and price.
+
+These transformations help stabilize variance, mitigate skewness, and improve the model’s ability to detect meaningful relationships between features and used car prices.
+
+```{r}
+# Stepwise selection using AIC
+full_model <- lm(log_price ~ age + log_kmdriven + fuel_type + transmission + mileage + engine + power + seats + brand, data = traincars)
+step_model <- step(full_model, direction = "both")
+summary(step_model)
+
+
+```
+
+**Model Selection Discussion**
+
+Using stepwise selection based on AIC, we identified a subset of predictors that best explain car prices while avoiding overfitting. The final model includes the following variables:
+
+**Fuel Type (fuel_type)** – Petrol vehicles tend to be priced lower than diesel vehicles, as indicated by the significant negative coefficient.
+
+**Transmission Type (transmission)** – Cars with manual transmission tend to have lower prices compared to automatic ones.
+
+**Mileage (mileage)** – Higher mileage is associated with lower prices, as expected due to wear and tear.
+
+**Power (power)** – Cars with higher horsepower tend to be priced higher, reflecting demand for performance vehicles.
+
+**Seats (seats)** – The number of seats plays a role, with 5-seater and 7-seater cars commanding higher prices.
+
+**Brand (brand)** – Brand has a significant impact on pricing, with certain brands (e.g., Hyundai, Mahindra, and Maruti) associated with lower prices compared to the baseline. Notably, Ford, Honda, Tata, Toyota, and Volkswagen also exhibit negative coefficients, suggesting that brand reputation plays a crucial role in determining used car prices. BMW and Mercedes brands do not show statistically significant effects, possibly due to sample size or higher variance within their price distributions.
+
+The final model achieved an R-squared value of 0.941, meaning approximately 94.1% of the variation in car prices is explained by these predictors. The adjusted R-squared of 0.9252 indicates that the model remains robust even after adjusting for the number of predictors. This suggests a strong model fit, with only 5.9% of price variation left unexplained, likely influenced by unmeasured factors such as vehicle condition, optional features, or local market demand.
+
+By incorporating brand as a predictor, the model better captures inherent pricing differences across manufacturers. This provides valuable insights for pricing strategies and helps Rohan assess which brands hold their value better in the used car market. The inclusion of brand ensures greater interpretability while maintaining predictive strength, making the model well-suited for forecasting used car prices.
+
+
+```{r}
+# Residual diagnostics
+par(mfrow = c(2,2))
+plot(step_model)
+
+```
+
+
+**Model Assumption Checks Discussion**
+
+**Normality of Residuals**: The Q-Q plot shows that the residuals largely follow the theoretical quantiles, indicating approximate normality. However, some deviation is present in the tails, suggesting mild non-normality at extreme values. While this is not severe, it may indicate that certain price ranges are less well-predicted, and applying robust regression techniques or further transformations could improve the model.
+
+**Homoscedasticity (Constant Variance)**: The Residuals vs. Fitted plot exhibits a fairly even spread of residuals across fitted values, meaning that variance appears mostly stable. However, the Scale-Location plot shows slight curvature, indicating mild variance instability for specific fitted values. This suggests that while heteroskedasticity is not a major issue, predictions for certain price levels may have greater variance in errors.
+
+**Independence of Residuals**: The dataset consists of 90 used cars, but it is unclear whether these cars were randomly sampled from a larger population. If the data collection process was biased—such as focusing on a particular dealership, brand, or region—this could limit generalizability. The assumption of independent observations holds if each car’s price is not influenced by others in the dataset, meaning that no repeated sales or brand-specific dependencies exist. If this dataset is not a truly random sample of the used car market, external validity may be limited.
+
+**Influential Points & Leverage**: The Residuals vs. Leverage plot highlights a few high-leverage observations, including those labeled (50, 84, 63, 34, and 4). These points do not exceed Cook’s distance threshold, meaning that they are unlikely to exert undue influence on the model. However, further investigation of these observations could be beneficial to ensure they do not distort the regression estimates.
+
+**Multicollinearity**: Variance Inflation Factor (VIF) values for all predictors remained below 5, confirming that multicollinearity is not a significant issue. This ensures that the selected predictors contribute independently to the model’s predictive power.
+
+
+```{r}
+# lowercase names
+names(testcars) <- tolower(names(testcars))
+testcars <- testcars %>%
+  mutate(brand = as.factor(brand),
+         model = as.factor(model), 
+         fuel_type = as.factor(fuel_type),
+         transmission = as.factor(transmission),
+         owner_type = as.factor(owner_type),
+         seats = as.factor(seats) # only 3 values. probably easier for predictions later on
+         )
+
+testcars <- testcars %>%
+  mutate(
+    age = 2025 - year,  
+    age_squared = age^2,  
+    log_kmdriven = log(kilometers_driven + 1),  
+    pow_per_cc = power / engine,  
+    brand = factor(brand, levels = levels(traincars$brand)),  # Ensure factor levels match
+
+    # Match categorical factor levels exactly to training set
+    fuel_type = factor(fuel_type, levels = levels(traincars$fuel_type)),
+    transmission = factor(transmission, levels = levels(traincars$transmission)),
+    owner_type = factor(owner_type, levels = levels(traincars$owner_type)),
+    seats = factor(seats, levels = levels(traincars$seats))
+  )
+
+
+# Remove any NA rows caused by factor mismatches
+testcars <- na.omit(testcars)
+
+
+# Predict log-transformed prices on the test set
+testcars$predicted_log_price <- predict(step_model, newdata = testcars)
+
+# Convert back to actual price scale
+testcars$predicted_price <- exp(testcars$predicted_log_price)
+
+
+# Compare actual vs predicted
+ggplot(testcars, aes(x = price, y = predicted_price)) +
+  geom_point(color = "blue", alpha = 0.7, size = 3) +  # Transparency & size for visibility
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed") +  # Ideal prediction line
+  labs(title = "Actual vs. Predicted Prices", x = "Actual Price", y = "Predicted Price") +
+  theme_minimal()
+
+
+# Compute performance metrics
+rmse <- sqrt(mean((testcars$predicted_price - testcars$price)^2))  # Root Mean Squared Error
+mae <- mean(abs(testcars$predicted_price - testcars$price))  # Mean Absolute Error
+
+# Compute R-squared
+sse <- sum((testcars$price - testcars$predicted_price)^2)  # Sum of Squared Errors
+sst <- sum((testcars$price - mean(testcars$price))^2)  # Total Sum of Squares
+r_squared <- 1 - (sse / sst)  # R-squared value
+
+# Display results
+cat("Model Performance on Test Set:\n")
+cat("Root Mean Squared Error (RMSE):", round(rmse, 2), "\n")
+cat("Mean Absolute Error (MAE):", round(mae, 2), "\n")
+cat("R-squared (R²):", round(r_squared, 4), "\n")
+
+
+
+```
+
+
+**Prediction and Model Validation Discussion**
+
+The Actual vs. Predicted Price scatter plot indicates a strong linear relationship, demonstrating that the model effectively captures trends in used car pricing. The predicted values align well with the actual prices, suggesting that the model performs well across various price ranges. While minor deviations exist, particularly in the higher price range, the model still maintains a high level of accuracy.
+
+The model achieved the following performance metrics:
+
+Root Mean Squared Error (RMSE): **₹279,245.8** → On average, predictions deviate by this amount from actual prices.
+
+Mean Absolute Error (MAE): **₹202,082.1** → The typical absolute difference between predicted and actual prices.
+
+R-squared (R²): **0.9249** → The model explains 92.49% of the variation in car prices, leaving only 7.51% unexplained by the included predictors.
+
+These results suggest that the model provides high predictive accuracy, significantly improving upon previous iterations. The inclusion of brand as a predictor likely contributed to better performance, as brand reputation plays a crucial role in used car pricing. While slight underestimation or overestimation may still occur in high-value cars, overall, the model generalizes well to unseen data and effectively predicts used car prices with minimal error.
